@@ -3,6 +3,7 @@ package org.yaxim.androidclient.service;
 import java.io.File;
 import java.util.Collection;
 import java.util.Date;
+
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.X509TrustManager;
 
@@ -17,9 +18,11 @@ import org.jivesoftware.smack.RosterEntry;
 import org.jivesoftware.smack.RosterGroup;
 import org.jivesoftware.smack.RosterListener;
 import org.jivesoftware.smack.SmackConfiguration;
+import org.jivesoftware.smack.SmackException.NoResponseException;
+import org.jivesoftware.smack.SmackException.NotConnectedException;
 import org.jivesoftware.smack.XMPPConnection;
 import org.jivesoftware.smack.XMPPException;
-import org.jivesoftware.smack.filter.PacketFilter;
+import org.jivesoftware.smack.XMPPException.XMPPErrorException;
 import org.jivesoftware.smack.filter.PacketTypeFilter;
 import org.jivesoftware.smack.packet.IQ;
 import org.jivesoftware.smack.packet.IQ.Type;
@@ -27,31 +30,22 @@ import org.jivesoftware.smack.packet.Message;
 import org.jivesoftware.smack.packet.Packet;
 import org.jivesoftware.smack.packet.Presence;
 import org.jivesoftware.smack.packet.Presence.Mode;
-import org.jivesoftware.smack.provider.ProviderManager;
-import org.jivesoftware.smack.util.DNSUtil;
-import org.jivesoftware.smack.util.StringUtils;
-import org.jivesoftware.smack.util.dns.DNSJavaResolver;
-import org.jivesoftware.smackx.entitycaps.EntityCapsManager;
-import org.jivesoftware.smackx.entitycaps.cache.SimpleDirectoryPersistentCache;
-import org.jivesoftware.smackx.ServiceDiscoveryManager;
-import org.jivesoftware.smackx.carbons.Carbon;
+import org.jivesoftware.smack.tcp.XMPPTCPConnection;
+import org.jivesoftware.smack.tcp.sm.StreamManagementException.StreamManagementNotEnabledException;
+import org.jivesoftware.smackx.caps.EntityCapsManager;
+import org.jivesoftware.smackx.caps.cache.SimpleDirectoryPersistentCache;
 import org.jivesoftware.smackx.carbons.CarbonManager;
-import org.jivesoftware.smackx.entitycaps.provider.CapsExtensionProvider;
-import org.jivesoftware.smackx.forward.Forwarded;
-import org.jivesoftware.smackx.provider.DelayInfoProvider;
-import org.jivesoftware.smackx.provider.DiscoverInfoProvider;
-import org.jivesoftware.smackx.provider.DiscoverItemsProvider;
-import org.jivesoftware.smackx.packet.DelayInformation;
-import org.jivesoftware.smackx.packet.DelayInfo;
-import org.jivesoftware.smackx.packet.DiscoverInfo;
-import org.jivesoftware.smackx.packet.Version;
-import org.jivesoftware.smackx.ping.PingManager;
-import org.jivesoftware.smackx.ping.packet.*;
-import org.jivesoftware.smackx.ping.provider.PingProvider;
+import org.jivesoftware.smackx.carbons.packet.CarbonExtension;
+import org.jivesoftware.smackx.delay.packet.DelayInformation;
+import org.jivesoftware.smackx.disco.ServiceDiscoveryManager;
+import org.jivesoftware.smackx.disco.packet.DiscoverInfo;
+import org.jivesoftware.smackx.iqversion.VersionManager;
+import org.jivesoftware.smackx.ping.packet.Ping;
 import org.jivesoftware.smackx.receipts.DeliveryReceipt;
 import org.jivesoftware.smackx.receipts.DeliveryReceiptManager;
 import org.jivesoftware.smackx.receipts.DeliveryReceiptRequest;
 import org.jivesoftware.smackx.receipts.ReceiptReceivedListener;
+import org.jxmpp.util.XmppStringUtils;
 import org.yaxim.androidclient.YaximApplication;
 import org.yaxim.androidclient.data.ChatProvider;
 import org.yaxim.androidclient.data.RosterProvider;
@@ -61,7 +55,6 @@ import org.yaxim.androidclient.data.RosterProvider.RosterConstants;
 import org.yaxim.androidclient.exceptions.YaximXMPPException;
 import org.yaxim.androidclient.util.ConnectionState;
 import org.yaxim.androidclient.util.LogConstants;
-import org.yaxim.androidclient.util.PreferenceConstants;
 import org.yaxim.androidclient.util.StatusMode;
 
 import android.app.AlarmManager;
@@ -74,7 +67,6 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.database.Cursor;
-
 import android.net.Uri;
 import android.util.Log;
 
@@ -97,47 +89,16 @@ public class SmackableImp implements Smackable {
 	static File capsCacheDir = null; ///< this is used to cache if we already initialized EntityCapsCache
 
 	static {
-		registerSmackProviders();
-		DNSUtil.setDNSResolver(DNSJavaResolver.getInstance());
+		ServiceDiscoveryManager.setDefaultIdentity(YAXIM_IDENTITY);
 
 		// initialize smack defaults before any connections are created
-		SmackConfiguration.setPacketReplyTimeout(PACKET_TIMEOUT);
-		SmackConfiguration.setDefaultPingInterval(0);
-	}
-
-	static void registerSmackProviders() {
-		ProviderManager pm = ProviderManager.getInstance();
-		// add IQ handling
-		pm.addIQProvider("query","http://jabber.org/protocol/disco#info", new DiscoverInfoProvider());
-		pm.addIQProvider("query","http://jabber.org/protocol/disco#items", new DiscoverItemsProvider());
-		// add delayed delivery notifications
-		pm.addExtensionProvider("delay","urn:xmpp:delay", new DelayInfoProvider());
-		pm.addExtensionProvider("x","jabber:x:delay", new DelayInfoProvider());
-		// add XEP-0092 Software Version
-		pm.addIQProvider("query", Version.NAMESPACE, new Version.Provider());
-
-		// add carbons and forwarding
-		pm.addExtensionProvider("forwarded", Forwarded.NAMESPACE, new Forwarded.Provider());
-		pm.addExtensionProvider("sent", Carbon.NAMESPACE, new Carbon.Provider());
-		pm.addExtensionProvider("received", Carbon.NAMESPACE, new Carbon.Provider());
-		// add delivery receipts
-		pm.addExtensionProvider(DeliveryReceipt.ELEMENT, DeliveryReceipt.NAMESPACE, new DeliveryReceipt.Provider());
-		pm.addExtensionProvider(DeliveryReceiptRequest.ELEMENT, DeliveryReceipt.NAMESPACE, new DeliveryReceiptRequest.Provider());
-		// add XMPP Ping (XEP-0199)
-		pm.addIQProvider("ping","urn:xmpp:ping", new PingProvider());
-
-		ServiceDiscoveryManager.setDefaultIdentity(YAXIM_IDENTITY);
-		
-		// XEP-0115 Entity Capabilities
-		pm.addExtensionProvider("c", "http://jabber.org/protocol/caps", new CapsExtensionProvider());
-
-		XmppStreamHandler.addExtensionProviders();
+		SmackConfiguration.setDefaultPacketReplyTimeout(PACKET_TIMEOUT);
+//		SmackConfiguration.setDefaultPingInterval(0);
 	}
 
 	private final YaximConfiguration mConfig;
 	private ConnectionConfiguration mXMPPConfig;
-	private XmppStreamHandler.ExtXMPPConnection mXMPPConnection;
-	private XmppStreamHandler mStreamHandler;
+	private XMPPTCPConnection mXMPPConnection;
 	private Thread mConnectingThread;
 	private Object mConnectingThreadMutex = new Object();
 
@@ -209,13 +170,6 @@ public class SmackableImp implements Smackable {
 			debugLog("initialize MemorizingTrustManager: " + e);
 		}
 
-		this.mXMPPConnection = new XmppStreamHandler.ExtXMPPConnection(mXMPPConfig);
-		this.mStreamHandler = new XmppStreamHandler(mXMPPConnection, mConfig.smackdebug);
-		mStreamHandler.addAckReceivedListener(new XmppStreamHandler.AckReceivedListener() {
-			public void ackReceived(long handled, long total) {
-				gotServerPong("" + handled);
-			}
-		});
 		mConfig.reconnect_required = false;
 
 		initServiceDiscovery();
@@ -328,7 +282,7 @@ public class SmackableImp implements Smackable {
 				new Thread() {
 					public void run() {
 						updateConnectingThread(this);
-						mStreamHandler.quickShutdown();
+						mXMPPConnection.instantShutdown();
 						onDisconnected("forced disconnect completed");
 						finishConnectingThread();
 						//updateConnectionState(ConnectionState.OFFLINE);
@@ -350,8 +304,12 @@ public class SmackableImp implements Smackable {
 				new Thread() {
 					public void run() {
 						updateConnectingThread(this);
-						mXMPPConnection.shutdown();
-						mStreamHandler.close();
+						try {
+							mXMPPConnection.disconnect();
+						} catch (NotConnectedException e) {
+							// TODO Auto-generated catch block
+							e.printStackTrace();
+						}
 						mAlarmManager.cancel(mPongTimeoutAlarmPendIntent);
 						// we should reset XMPPConnection the next time
 						mConfig.reconnect_required = true;
@@ -405,28 +363,17 @@ public class SmackableImp implements Smackable {
 			mServiceCallBack.connectionStateChanged();
 	}
 	private void initServiceDiscovery() {
-		// register connection features
-		ServiceDiscoveryManager sdm = ServiceDiscoveryManager.getInstanceFor(mXMPPConnection);
-
 		// init Entity Caps manager with storage in app's cache dir
-		try {
-			if (capsCacheDir == null) {
-				capsCacheDir = new File(mService.getCacheDir(), "entity-caps-cache");
-				capsCacheDir.mkdirs();
-				EntityCapsManager.setPersistentCache(new SimpleDirectoryPersistentCache(capsCacheDir));
-			}
-		} catch (java.io.IOException e) {
-			Log.e(TAG, "Could not init Entity Caps cache: " + e.getLocalizedMessage());
+		if (capsCacheDir == null) {
+			capsCacheDir = new File(mService.getCacheDir(), "entity-caps-cache");
+			capsCacheDir.mkdirs();
+			EntityCapsManager.setPersistentCache(new SimpleDirectoryPersistentCache(capsCacheDir));
 		}
-
-		// reference PingManager, set ping flood protection to 10s
-		PingManager.getInstanceFor(mXMPPConnection).setPingMinimumInterval(10*1000);
 
 		// set Version for replies
 		String app_name = mService.getString(org.yaxim.androidclient.R.string.app_name);
 		String build_revision = mService.getString(org.yaxim.androidclient.R.string.build_revision);
-		Version.Manager.getInstanceFor(mXMPPConnection).setVersion(
-				new Version(app_name, build_revision, "Android"));
+		VersionManager.getInstanceFor(mXMPPConnection).setVersion(app_name, build_revision, "Android");
 
 		// reference DeliveryReceiptManager, add listener
 		DeliveryReceiptManager dm = DeliveryReceiptManager.getInstanceFor(mXMPPConnection);
@@ -457,7 +404,11 @@ public class SmackableImp implements Smackable {
 		if (!(newName.length() > 0) || (rosterEntry == null)) {
 			throw new YaximXMPPException("JabberID to rename is invalid!");
 		}
-		rosterEntry.setName(newName);
+		try {
+			rosterEntry.setName(newName);
+		} catch (NotConnectedException e) {
+			throw new YaximXMPPException(e.getLocalizedMessage());
+		}
 	}
 
 	public void addRosterGroup(String group) {
@@ -466,7 +417,11 @@ public class SmackableImp implements Smackable {
 
 	public void renameRosterGroup(String group, String newGroup) {
 		RosterGroup groupToRename = mRoster.getGroup(group);
-		groupToRename.setName(newGroup);
+		try {
+			groupToRename.setName(newGroup);
+		} catch (NotConnectedException e) {
+			throw new IllegalStateException(e);
+		}
 	}
 
 	public void moveRosterItemToGroup(String user, String group)
@@ -480,19 +435,27 @@ public class SmackableImp implements Smackable {
 			deleteRosterEntryFromDB(user);
 		Presence response = new Presence(Presence.Type.valueOf(type));
 		response.setTo(user);
-		mXMPPConnection.sendPacket(response);
+		try {
+			mXMPPConnection.sendPacket(response);
+		} catch (NotConnectedException e) {
+			throw new IllegalStateException(e);
+		}
 	}
 	
 	@Override
 	public String changePassword(String newPassword) {
 		try {
-			new AccountManager(mXMPPConnection).changePassword(newPassword);
+			AccountManager.getInstance(mXMPPConnection).changePassword(newPassword);
 			return "OK"; //HACK: hard coded string to differentiate from failure modes
-		} catch (XMPPException e) {
+		} catch (XMPPErrorException e) {
 			if (e.getXMPPError() != null)
 				return e.getXMPPError().toString();
 			else
 				return e.getLocalizedMessage();
+		} catch (NoResponseException e) {
+			throw new IllegalStateException(e);
+		} catch (NotConnectedException e) {
+			throw new IllegalStateException(e);
 		}
 	}
 
@@ -514,13 +477,12 @@ public class SmackableImp implements Smackable {
 		try {
 			if (mXMPPConnection.isConnected()) {
 				try {
-					mStreamHandler.quickShutdown(); // blocking shutdown prior to re-connection
+					mXMPPConnection.instantShutdown(); // blocking shutdown prior to re-connection
 				} catch (Exception e) {
 					debugLog("conn.shutdown() failed: " + e);
 				}
 			}
 			registerRosterListener();
-			boolean need_bind = !mStreamHandler.isResumePossible();
 
 			if (mConnectionListener != null)
 				mXMPPConnection.removeConnectionListener(mConnectionListener);
@@ -533,28 +495,35 @@ public class SmackableImp implements Smackable {
 					//onDisconnected(null);
 					updateConnectionState(ConnectionState.OFFLINE);
 				}
-				public void reconnectingIn(int seconds) { }
-				public void reconnectionFailed(Exception e) { }
-				public void reconnectionSuccessful() { }
+				@Override
+				public void connected(XMPPConnection connection) {}
+				@Override
+				public void authenticated(XMPPConnection connection) {}
+				@Override
+				public void reconnectingIn(int seconds) {}
+				@Override
+				public void reconnectionSuccessful() {}
+				@Override
+				public void reconnectionFailed(Exception e) {}
 			};
 			mXMPPConnection.addConnectionListener(mConnectionListener);
 
-			mXMPPConnection.connect(need_bind);
+			mXMPPConnection.connect();
 			// SMACK auto-logins if we were authenticated before
 			if (!mXMPPConnection.isAuthenticated()) {
 				if (create_account) {
 					Log.d(TAG, "creating new server account...");
-					AccountManager am = new AccountManager(mXMPPConnection);
+					AccountManager am = AccountManager.getInstance(mXMPPConnection);
 					am.createAccount(mConfig.userName, mConfig.password);
 				}
 				mXMPPConnection.login(mConfig.userName, mConfig.password,
 						mConfig.ressource);
 			}
-			Log.d(TAG, "SM: can resume = " + mStreamHandler.isResumePossible() + " needbind=" + need_bind);
-			if (need_bind) {
-				mStreamHandler.notifyInitialLogin();
-				setStatusFromConfig();
-			}
+			Log.d(TAG, "SM: can resume = " + mXMPPConnection.isSmResumptionPossible());
+//			if (need_bind) {
+//				mStreamHandler.notifyInitialLogin();
+//				setStatusFromConfig();
+//			}
 
 		} catch (Exception e) {
 			// actually we just care for IllegalState or NullPointer or XMPPEx.
@@ -576,6 +545,10 @@ public class SmackableImp implements Smackable {
 			try {
 				rosterGroup.addEntry(rosterEntry);
 			} catch (XMPPException e) {
+				throw new YaximXMPPException("tryToMoveRosterEntryToGroup", e);
+			} catch (NoResponseException e) {
+				throw new YaximXMPPException("tryToMoveRosterEntryToGroup", e);
+			} catch (NotConnectedException e) {
 				throw new YaximXMPPException("tryToMoveRosterEntryToGroup", e);
 			}
 		}
@@ -607,6 +580,10 @@ public class SmackableImp implements Smackable {
 			group.removeEntry(rosterEntry);
 		} catch (XMPPException e) {
 			throw new YaximXMPPException("tryToRemoveUserFromGroup", e);
+		} catch (NoResponseException e) {
+			throw new YaximXMPPException("tryToMoveRosterEntryToGroup", e);
+		} catch (NotConnectedException e) {
+			throw new YaximXMPPException("tryToMoveRosterEntryToGroup", e);
 		}
 	}
 
@@ -622,7 +599,7 @@ public class SmackableImp implements Smackable {
 				// then, remove from roster
 				mRoster.removeEntry(rosterEntry);
 			}
-		} catch (XMPPException e) {
+		} catch (Exception e) {
 			throw new YaximXMPPException("tryToRemoveRosterEntry", e);
 		}
 	}
@@ -631,7 +608,7 @@ public class SmackableImp implements Smackable {
 			throws YaximXMPPException {
 		try {
 			mRoster.createEntry(user, alias, new String[] { group });
-		} catch (XMPPException e) {
+		} catch (Exception e) {
 			throw new YaximXMPPException("tryToAddRosterEntry", e);
 		}
 	}
@@ -671,14 +648,22 @@ public class SmackableImp implements Smackable {
 
 	public void setStatusFromConfig() {
 		// TODO: only call this when carbons changed, not on every presence change
-		CarbonManager.getInstanceFor(mXMPPConnection).sendCarbonsEnabled(mConfig.messageCarbons);
+		try {
+			CarbonManager.getInstanceFor(mXMPPConnection).sendCarbonsEnabled(mConfig.messageCarbons);
+		} catch (NotConnectedException e) {
+			throw new IllegalStateException(e);
+		}
 
 		Presence presence = new Presence(Presence.Type.available);
 		Mode mode = Mode.valueOf(mConfig.statusMode);
 		presence.setMode(mode);
 		presence.setStatus(mConfig.statusMessage);
 		presence.setPriority(mConfig.priority);
-		mXMPPConnection.sendPacket(presence);
+		try {
+			mXMPPConnection.sendPacket(presence);
+		} catch (NotConnectedException e) {
+			throw new IllegalStateException(e);
+		}
 		mConfig.presence_required = false;
 	}
 
@@ -704,7 +689,6 @@ public class SmackableImp implements Smackable {
 			newMessage.setBody(message);
 			DelayInformation delay = new DelayInformation(new Date(ts));
 			newMessage.addExtension(delay);
-			newMessage.addExtension(new DelayInfo(delay));
 			newMessage.addExtension(new DeliveryReceiptRequest());
 			if ((packetID != null) && (packetID.length() > 0)) {
 				newMessage.setPacketID(packetID);
@@ -716,7 +700,13 @@ public class SmackableImp implements Smackable {
 				+ "/" + ChatProvider.TABLE_NAME + "/" + _id);
 			mContentResolver.update(rowuri, mark_sent,
 						null, null);
-			mXMPPConnection.sendPacket(newMessage);		// must be after marking delivered, otherwise it may override the SendFailListener
+			try {
+				mXMPPConnection.sendPacket(newMessage);
+			} catch (NotConnectedException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+			}
+			// must be after marking delivered, otherwise it may override the SendFailListener
 		}
 		cursor.close();
 	}
@@ -736,7 +726,11 @@ public class SmackableImp implements Smackable {
 		Log.d(TAG, "sending XEP-0184 ack to " + toJID + " id=" + id);
 		final Message ack = new Message(toJID, Message.Type.normal);
 		ack.addExtension(new DeliveryReceipt(id));
-		mXMPPConnection.sendPacket(ack);
+		try {
+			mXMPPConnection.sendPacket(ack);
+		} catch (NotConnectedException e) {
+			throw new IllegalStateException(e);
+		}
 	}
 
 	public void sendMessage(String toJID, String message) {
@@ -746,7 +740,11 @@ public class SmackableImp implements Smackable {
 		if (isAuthenticated()) {
 			addChatMessageToDB(ChatConstants.OUTGOING, toJID, message, ChatConstants.DS_SENT_OR_READ,
 					System.currentTimeMillis(), newMessage.getPacketID());
-			mXMPPConnection.sendPacket(newMessage);
+			try {
+				mXMPPConnection.sendPacket(newMessage);
+			} catch (NotConnectedException e) {
+				throw new IllegalStateException(e);
+			}
 		} else {
 			// send offline -> store to DB
 			addChatMessageToDB(ChatConstants.OUTGOING, toJID, message, ChatConstants.DS_NEW,
@@ -899,16 +897,26 @@ public class SmackableImp implements Smackable {
 			return; // a ping is still on its way
 		}
 
-		if (mStreamHandler.isSmEnabled()) {
-			debugLog("Ping: sending SM request");
-			mPingID = "" + mStreamHandler.requestAck();
-		} else {
-			Ping ping = new Ping();
-			ping.setType(Type.GET);
-			ping.setTo(mConfig.server);
-			mPingID = ping.getPacketID();
-			debugLog("Ping: sending ping " + mPingID);
+		// TODO evaluate if PingManager.pingMyServer would be feasible here
+		Ping ping = new Ping();
+		ping.setType(Type.get);
+		ping.setTo(mConfig.server);
+		mPingID = ping.getPacketID();
+		debugLog("Ping: sending ping " + mPingID);
+		try {
 			mXMPPConnection.sendPacket(ping);
+		} catch (NotConnectedException e) {
+			throw new IllegalStateException(e);
+		}
+		if (mXMPPConnection.isSmEnabled()) {
+			debugLog("Ping: sending SM request");
+			try {
+				mXMPPConnection.requestSmAcknowledgement();
+			} catch (StreamManagementNotEnabledException e) {
+				throw new IllegalStateException(e);
+			} catch (NotConnectedException e) {
+				throw new IllegalStateException(e);
+			}
 		}
 
 		// register ping timeout handler: PACKET_TIMEOUT(30s) + 3s
@@ -998,7 +1006,7 @@ public class SmackableImp implements Smackable {
 		if (mPacketListener != null)
 			mXMPPConnection.removePacketListener(mPacketListener);
 
-		PacketTypeFilter filter = new PacketTypeFilter(Message.class);
+		PacketTypeFilter filter = PacketTypeFilter.MESSAGE;
 
 		mPacketListener = new PacketListener() {
 			public void processPacket(Packet packet) {
@@ -1008,13 +1016,11 @@ public class SmackableImp implements Smackable {
 
 					String fromJID = getBareJID(msg.getFrom());
 					int direction = ChatConstants.INCOMING;
-					Carbon cc = CarbonManager.getCarbon(msg);
+					CarbonExtension cc = CarbonExtension.getFrom(msg);
 
 					// extract timestamp
 					long ts;
-					DelayInfo timestamp = (DelayInfo)msg.getExtension("delay", "urn:xmpp:delay");
-					if (timestamp == null)
-						timestamp = (DelayInfo)msg.getExtension("x", "jabber:x:delay");
+					DelayInformation timestamp = DelayInformation.getFrom(msg);
 					if (cc != null) // Carbon timestamp overrides packet timestamp
 						timestamp = cc.getForwarded().getDelayInfo();
 					if (timestamp != null)
@@ -1028,7 +1034,7 @@ public class SmackableImp implements Smackable {
 						msg = (Message)cc.getForwarded().getForwardedPacket();
 
 						// outgoing carbon: fromJID is actually chat peer's JID
-						if (cc.getDirection() == Carbon.Direction.sent) {
+						if (cc.getDirection() == CarbonExtension.Direction.sent) {
 							fromJID = getBareJID(msg.getTo());
 							direction = ChatConstants.OUTGOING;
 						} else {
@@ -1163,7 +1169,7 @@ public class SmackableImp implements Smackable {
 		if (name != null && name.length() > 0) {
 			return name;
 		}
-		name = StringUtils.parseName(rosterEntry.getUser());
+		name = XmppStringUtils.parseLocalpart(rosterEntry.getUser());
 		if (name.length() > 0) {
 			return name;
 		}

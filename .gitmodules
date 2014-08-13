@@ -4,3 +4,6 @@
 [submodule "ActionBarSherlock"]
 	path = ActionBarSherlock
 	url = git://github.com/JakeWharton/ActionBarSherlock.git
+[submodule "tools/MavenToAndroidAnt"]
+	path = tools/MavenToAndroidAnt
+	url = https://github.com/Flowdalic/MavenToAndroidAnt.git

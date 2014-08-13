@@ -71,6 +71,11 @@
     -->
 
     <target name="-pre-build">
+	<exec dir="./tools/MavenToAndroidAnt/" executable="python3" failonerror="true">
+		<arg value="getMavenArtifacts.py"/>
+		<arg value="-p ../../."/>
+		<arg value="-f artifacts.csv"/>
+	</exec>
 	<tstamp>
 	    <format property="build.date" pattern="yyyy-MM-dd" />
 	</tstamp>
