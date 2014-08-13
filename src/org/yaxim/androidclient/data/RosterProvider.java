@@ -289,8 +289,7 @@ public class RosterProvider extends ContentProvider {
 			super(context, DATABASE_NAME, null, DATABASE_VERSION);
 		}
 
-		@Override
-		public void onCreate(SQLiteDatabase db) {
+		private void onCreateRoster(SQLiteDatabase db) {
 			infoLog("creating new roster table");
 
 			db.execSQL("CREATE TABLE " + TABLE_ROSTER + " ("
@@ -306,20 +305,24 @@ public class RosterProvider extends ContentProvider {
 				        + " (" + RosterConstants.ALIAS + ")");
 			db.execSQL("CREATE INDEX idx_roster_status ON " + TABLE_ROSTER
 				        + " (" + RosterConstants.STATUS_MODE + ")");
-			
+		}
+
+		@Override
+		public void onCreate(SQLiteDatabase db) {
+			onCreateRoster(db);
 			db.execSQL("CREATE TABLE " + TABLE_MUCS + " ("
 					+ RosterConstants._ID + " INTEGER PRIMARY KEY AUTOINCREMENT, "
 					+ RosterConstants.JID + " TEXT UNIQUE ON CONFLICT REPLACE, "
 					+ RosterConstants.NICKNAME + " TEXT, "
 					+ RosterConstants.PASSWORD + " TEXT"
 					+ ");");
-			
 		}
 
 		@Override
 		public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
 			infoLog("onUpgrade: from " + oldVersion + " to " + newVersion);
 			switch (oldVersion) {
+			case 4:
 			case 5:
 				db.execSQL("CREATE TABLE " + TABLE_MUCS + " ("
 						+ RosterConstants._ID + " INTEGER PRIMARY KEY AUTOINCREMENT, "
@@ -330,7 +333,7 @@ public class RosterProvider extends ContentProvider {
 			default:
 				db.execSQL("DROP TABLE IF EXISTS " + TABLE_GROUPS);
 				db.execSQL("DROP TABLE IF EXISTS " + TABLE_ROSTER);
-				onCreate(db);
+				onCreateRoster(db);
 			}
 		}
 	}
