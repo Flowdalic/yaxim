@@ -9,7 +9,7 @@ import javax.net.ssl.X509TrustManager;
 
 import de.duenndns.ssl.MemorizingTrustManager;
 
-import org.jivesoftware.smack.AccountManager;
+import org.jivesoftware.smackx.iqregister.AccountManager;
 import org.jivesoftware.smack.ConnectionConfiguration;
 import org.jivesoftware.smack.ConnectionListener;
 import org.jivesoftware.smack.PacketListener;
