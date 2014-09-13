@@ -1,5 +1,7 @@
 package org.yaxim.androidclient.service;
 
+import gnu.inet.encoding.IDNAException;
+
 import java.io.File;
 import java.util.Collection;
 import java.util.Date;
@@ -32,6 +34,8 @@ import org.jivesoftware.smack.packet.Presence;
 import org.jivesoftware.smack.packet.Presence.Mode;
 import org.jivesoftware.smack.tcp.XMPPTCPConnection;
 import org.jivesoftware.smack.tcp.sm.StreamManagementException.StreamManagementNotEnabledException;
+import org.jivesoftware.smack.util.DNSUtil;
+import org.jivesoftware.smack.util.StringTransformer;
 import org.jivesoftware.smackx.caps.EntityCapsManager;
 import org.jivesoftware.smackx.caps.cache.SimpleDirectoryPersistentCache;
 import org.jivesoftware.smackx.carbons.CarbonManager;
@@ -94,6 +98,18 @@ public class SmackableImp implements Smackable {
 		// initialize smack defaults before any connections are created
 		SmackConfiguration.setDefaultPacketReplyTimeout(PACKET_TIMEOUT);
 //		SmackConfiguration.setDefaultPingInterval(0);
+
+		DNSUtil.setIdnaTransformer(new StringTransformer() {
+			@Override
+			public String transform(String string) {
+				try {
+					return gnu.inet.encoding.IDNA.toASCII(string);
+				} catch (IDNAException e) {
+					Log.w("Could not perform IDNA transformation", e);
+					return string;
+				}
+			}
+		});
 	}
 
 	private final YaximConfiguration mConfig;
