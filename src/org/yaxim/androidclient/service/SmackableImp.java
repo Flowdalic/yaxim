@@ -390,7 +390,7 @@ public class SmackableImp implements Smackable {
 		// set Version for replies
 		String app_name = mService.getString(org.yaxim.androidclient.R.string.app_name);
 		String build_revision = mService.getString(org.yaxim.androidclient.R.string.build_revision);
-		VersionManager.getInstanceFor(mXMPPConnection).setVersion(app_name, build_revision, "Android");
+		VersionManager.setDefaultVersion(app_name, build_revision, "Android");
 
 		// reference DeliveryReceiptManager, add listener
 		DeliveryReceiptManager dm = DeliveryReceiptManager.getInstanceFor(mXMPPConnection);
