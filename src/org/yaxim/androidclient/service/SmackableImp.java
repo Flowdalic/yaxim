@@ -208,6 +208,7 @@ public class SmackableImp implements Smackable {
 			debugLog("initialize MemorizingTrustManager: " + e);
 		}
 
+		mXMPPConnection = new XMPPTCPConnection(mXMPPConfig);
 		mConfig.reconnect_required = false;
 
 		multiUserChats = new HashMap<String, MultiUserChat>();
